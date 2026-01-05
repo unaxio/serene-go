@@ -151,10 +151,10 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 			if runtime.GOOS == "darwin" { // Mac
 				args = []string{"-hwaccel", "videotoolbox", "-rtsp_transport", "tcp", "-i", rtspURL, "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1"}
 			} else { // Linux (Nvidia)
-				args = []string{"-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-rtsp_transport", "tcp", "-i", rtspURL, "-vf", "fps=1/3,scale_npp=640:480", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1"}
+				args = []string{"-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-rtsp_transport", "tcp", "-i", rtspURL, "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1"}
 			}
 		} else { // 纯 CPU 模式
-			args = []string{"-rtsp_transport", "tcp", "-i", rtspURL, "-vf", "fps=1/3,scale=640:480", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"}
+			args = []string{"-rtsp_transport", "tcp", "-i", rtspURL, "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"}
 		}
 
 		log.Printf("[Connecting] Stream: %s", rtspURL)
