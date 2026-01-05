@@ -44,7 +44,7 @@ func NewStreamManager() *StreamManager {
 	return &StreamManager{
 		workers:    make(map[string]context.CancelFunc),
 		workerMeta: make(map[string]WorkerInfo),
-		useHW:      true, // 默认开启加速
+		useHW:      false, // 默认关闭加速
 	}
 }
 
@@ -151,6 +151,7 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 			if runtime.GOOS == "darwin" { // Mac
 				args = []string{"-hwaccel", "videotoolbox", "-rtsp_transport", "tcp", "-i", rtspURL, "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1"}
 			} else { // Linux (Nvidia)
+				// 此路不通，gpu解码vp8有问题
 				args = []string{"-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-rtsp_transport", "tcp", "-i", rtspURL, "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1"}
 			}
 		} else { // 纯 CPU 模式
