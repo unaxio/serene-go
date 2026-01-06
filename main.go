@@ -78,7 +78,7 @@ func splitJPEG(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	return totalLen, data[start:totalLen], nil
 }
 
-func pushToEmotionStream(userID string, result *EmotionResponse) error {
+func pushToEmotionStream(userID string, result *EmotionResponse, startTime time.Time) error {
 	listBytes, _ := json.Marshal(result.EmotionValueList)
 	return rdb.XAdd(ctxRedis, &redis.XAddArgs{
 		Stream: "serene:emotion_stream",
@@ -90,7 +90,7 @@ func pushToEmotionStream(userID string, result *EmotionResponse) error {
 			"value":     result.EmotionValue,
 			"list":      string(listBytes),
 			"feeling":   result.FeelingValue,
-			"timestamp": time.Now().Unix(),
+			"timestamp": startTime.UnixMilli(),
 		},
 	}).Err()
 }
@@ -210,7 +210,7 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 				log.Printf("[Success] Time:%v | Sign:%s | Value:%d",
 					time.Since(start), result.EmotionSign, result.EmotionValue)
 
-				err = pushToEmotionStream(userID, result)
+				err = pushToEmotionStream(userID, result, start)
 				if err != nil {
 					log.Printf("[Error] Push to Redis failed: %v", err)
 				}
