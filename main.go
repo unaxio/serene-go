@@ -57,7 +57,7 @@ var (
 func initRedis() {
 	rdb = redis.NewClient(&redis.Options{
 		Addr: "localhost:6379", // 你的 Redis 地址
-		DB:   0,
+		DB:   1,
 	})
 }
 
