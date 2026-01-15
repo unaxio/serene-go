@@ -185,7 +185,7 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 		for scanner.Scan() {
 			// 关键：立即检查时间，不符合条件直接丢弃，不进行任何内存拷贝或异步操作
 			now := time.Now()
-			if !lastUploadTime.IsZero() && now.Sub(lastUploadTime) < 3*time.Second {
+			if !lastUploadTime.IsZero() && now.Sub(lastUploadTime) < 2000*time.Millisecond {
 				continue
 			}
 
