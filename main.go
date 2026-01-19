@@ -86,6 +86,7 @@ func initRedis() {
 	log.Printf("Redis URL: %s", redisURL)
 	rdb = redis.NewClient(&redis.Options{
 		Addr: redisURL,
+		DB:   1,
 	})
 }
 
