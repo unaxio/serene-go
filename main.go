@@ -9,11 +9,13 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"sync"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -48,6 +50,28 @@ func NewStreamManager() *StreamManager {
 	}
 }
 
+var uploadInterval time.Duration
+
+func init() {
+	log.Println("init")
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+	val := os.Getenv("UPLOAD_INTERVAL")
+	if val == "" {
+		uploadInterval = 2000 * time.Millisecond // 默认1秒
+	} else {
+		duration, err := time.ParseDuration(val)
+		if err != nil {
+			log.Printf("Invalid UPLOAD_INTERVAL, using 1000ms: %v", err)
+			uploadInterval = 2000 * time.Millisecond
+		} else {
+			uploadInterval = duration
+		}
+	}
+}
+
 var (
 	rdb      *redis.Client
 	ctxRedis = context.Background()
@@ -55,9 +79,13 @@ var (
 
 // 在 main 之前初始化 Redis
 func initRedis() {
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		log.Fatal("REDIS_URL is not set")
+	}
+	log.Printf("Redis URL: %s", redisURL)
 	rdb = redis.NewClient(&redis.Options{
-		Addr: "localhost:6379", // 你的 Redis 地址
-		DB:   1,
+		Addr: redisURL,
 	})
 }
 
@@ -185,7 +213,7 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 		for scanner.Scan() {
 			// 关键：立即检查时间，不符合条件直接丢弃，不进行任何内存拷贝或异步操作
 			now := time.Now()
-			if !lastUploadTime.IsZero() && now.Sub(lastUploadTime) < 2000*time.Millisecond {
+			if !lastUploadTime.IsZero() && now.Sub(lastUploadTime) < 200*time.Millisecond {
 				continue
 			}
 

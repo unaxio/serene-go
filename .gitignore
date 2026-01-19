@@ -3,3 +3,4 @@ dist
 serene_go
 output.log
 logs
+.env
