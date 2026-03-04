@@ -181,7 +181,7 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 			return
 		}
 		defer audioR.Close()
-		defer audioW.Close()
+		// defer audioW.Close()
 		// ======================================
 
 		// --- 硬件加速逻辑分发 ---
@@ -217,8 +217,12 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 
 		if err := cmd.Start(); err != nil {
 			log.Printf("[Error] Failed to start FFmpeg: %v", err)
+			audioW.Close()
 			return
 		}
+		audioW.Close()
+
+		cmd.Stderr = os.Stdout
 
 		// ========= 新增：启动 ASR 处理协程 =========
 		go StartASRProcess(ctx, userID, audioR)

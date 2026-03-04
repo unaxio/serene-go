@@ -12,11 +12,12 @@ import (
 )
 
 // Demo测试开关：设为 false 时只打印控制台，不推 Redis
-var EnableASRRedisPush = false
+var EnableASRRedisPush = true
 
 type FunASRResult struct {
 	Text    string `json:"text"`
 	IsFinal bool   `json:"is_final"`
+	Mode    string `json:"mode"`
 }
 
 // StartASRProcess 处理音频流并连接到 FunASR
@@ -50,14 +51,18 @@ func StartASRProcess(ctx context.Context, userID string, audioReader io.Reader) 
 				_, message, err := conn.ReadMessage()
 				if err != nil {
 					log.Printf("[ASR Error] User %s: 读取消息失败: %v", userID, err)
-					log.Printf("[ASR Info] User %s: 识别连接已断开", userID)
 					return
 				}
 
 				var result FunASRResult
 				if err := json.Unmarshal(message, &result); err == nil && result.Text != "" {
 					// 打印到控制台
-					log.Printf("[ASR 实时] User: %s | IsFinal: %v | Text: %s", userID, result.IsFinal, result.Text)
+					if result.Mode == "2pass-online" {
+						log.Printf("[ASR Debug] User %s: %v 2pass-online %s", userID, result.IsFinal, result.Text)
+					}
+					if result.Mode == "2pass-offline" {
+						log.Printf("[ASR Debug] User %s: %v 2pass-offline %s", userID, result.IsFinal, result.Text)
+					}
 
 					// 如果开关开启，则推送 Redis
 					if EnableASRRedisPush {
@@ -97,6 +102,7 @@ func pushToASRStream(userID string, result FunASRResult) {
 		Approx: true,
 		Values: map[string]interface{}{
 			"userId":    userID,
+			"mode":      result.Mode,
 			"text":      result.Text,
 			"is_final":  result.IsFinal, // 前端可以通过这个判断这句话是不是说完了
 			"timestamp": time.Now().UnixMilli(),
