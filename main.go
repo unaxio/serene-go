@@ -171,25 +171,43 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 
 	rtspURL := fmt.Sprintf("rtsp://localhost:8554/%s", userID)
 
-	// 不进行for循环自动重启，加个if保持缩进防止git修改太多
 	if true {
 		var args []string
+
+		// ========= 新增：创建音频 Pipe =========
+		audioR, audioW, err := os.Pipe()
+		if err != nil {
+			log.Printf("[Error] Failed to create audio pipe: %v", err)
+			return
+		}
+		defer audioR.Close()
+		defer audioW.Close()
+		// ======================================
 
 		// --- 硬件加速逻辑分发 ---
 		if m.useHW {
 			if runtime.GOOS == "darwin" { // Mac
-				args = []string{"-hwaccel", "videotoolbox", "-rtsp_transport", "tcp", "-i", rtspURL, "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1"}
+				args = []string{"-hwaccel", "videotoolbox", "-rtsp_transport", "tcp", "-i", rtspURL,
+					"-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1",
+					"-f", "s16le", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "pipe:3"} // 新增音频输出到 pipe:3
 			} else { // Linux (Nvidia)
-				// 此路不通，gpu解码vp8有问题
-				args = []string{"-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-rtsp_transport", "tcp", "-i", rtspURL, "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1"}
+				args = []string{"-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-rtsp_transport", "tcp", "-i", rtspURL,
+					"-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1",
+					"-f", "s16le", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "pipe:3"} // 新增音频输出到 pipe:3
 			}
 		} else { // 纯 CPU 模式
-			args = []string{"-rtsp_transport", "tcp", "-i", rtspURL, "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"}
+			args = []string{"-rtsp_transport", "tcp", "-i", rtspURL,
+				"-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+				"-f", "s16le", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "pipe:3"} // 新增音频输出到 pipe:3
 		}
 
 		log.Printf("[Connecting] Stream: %s", rtspURL)
 
 		cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+
+		// ========= 新增：将 audioW 映射为 pipe:3 =========
+		cmd.ExtraFiles = []*os.File{audioW}
+		// =================================================
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -202,9 +220,12 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 			return
 		}
 
-		// 使用 Scanner 高效扫描输出流
+		// ========= 新增：启动 ASR 处理协程 =========
+		go StartASRProcess(ctx, userID, audioR)
+		// ===========================================
+
+		// === 以下保持原样，处理视频流 ===
 		scanner := bufio.NewScanner(stdout)
-		// 设置 Scanner 缓冲区最大为 1MB (防止大图片)
 		buf := make([]byte, 0, 64*1024)
 		scanner.Buffer(buf, 1*1024*1024)
 		scanner.Split(splitJPEG)
@@ -212,18 +233,14 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 		var lastUploadTime time.Time
 
 		for scanner.Scan() {
-			// 关键：立即检查时间，不符合条件直接丢弃，不进行任何内存拷贝或异步操作
 			now := time.Now()
 			if !lastUploadTime.IsZero() && now.Sub(lastUploadTime) < uploadInterval {
 				continue
 			}
 
-			// 只有过了 5 秒（或者是第一帧），才执行下面的逻辑
 			lastUploadTime = now
-
 			imgData := scanner.Bytes()
 
-			// 异步调用接口，不阻塞拉流主进程
 			go func(data []byte) {
 				start := time.Now()
 				result, err := callEmotionService(data)
@@ -232,13 +249,8 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 					return
 				}
 				if result.Code != 0 {
-					log.Printf("[Fail] Time:%v | Msg:%s | Code:%d",
-						time.Since(start), result.Msg, result.Code)
 					return
 				}
-				log.Printf("[Success] Time:%v | Sign:%s | Value:%d",
-					time.Since(start), result.EmotionSign, result.EmotionValue)
-
 				err = pushToEmotionStream(userID, result, start)
 				if err != nil {
 					log.Printf("[Error] Push to Redis failed: %v", err)
@@ -246,13 +258,8 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 			}(imgData)
 		}
 
-		if err := scanner.Err(); err != nil {
-			log.Printf("[Error] Stream reading interrupted: %v", err)
-		}
-
 		cmd.Wait()
 
-		// 检查循环退出是因为被外部杀掉，还是因为流断了
 		select {
 		case <-ctx.Done():
 			log.Printf("[Stop] Received external instruction to stop user %s", userID)
