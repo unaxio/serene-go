@@ -7,7 +7,7 @@ LOG_FILE="output.log"
 
 # 1.5 构建
 mkdir -p logs
-go build -o $APP_NAME main.go
+go build -o $APP_NAME .
 chmod +x $APP_NAME
 
 # 2. 杀掉已经在运行的旧进程
