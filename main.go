@@ -51,6 +51,7 @@ func NewStreamManager() *StreamManager {
 }
 
 var uploadInterval time.Duration
+var funAsrURL string
 
 func init() {
 	log.Println("init")
@@ -70,6 +71,7 @@ func init() {
 			uploadInterval = duration
 		}
 	}
+	funAsrURL = os.Getenv("FUN_ASR_URL")
 }
 
 var (
@@ -225,7 +227,7 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 		cmd.Stderr = os.Stdout
 
 		// ========= 新增：启动 ASR 处理协程 =========
-		go StartASRProcess(ctx, userID, audioR)
+		go StartASRProcess(funAsrURL, ctx, userID, audioR)
 		// ===========================================
 
 		// === 以下保持原样，处理视频流 ===

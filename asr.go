@@ -21,9 +21,8 @@ type FunASRResult struct {
 }
 
 // StartASRProcess 处理音频流并连接到 FunASR
-func StartASRProcess(ctx context.Context, userID string, audioReader io.Reader) {
+func StartASRProcess(wsURL string, ctx context.Context, userID string, audioReader io.Reader) {
 	// 1. 连接到 FunASR WebSocket 服务
-	wsURL := "ws://192.168.1.76:10095"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		log.Printf("[ASR Error] User %s: 连接 FunASR 失败: %v", userID, err)
