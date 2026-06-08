@@ -38,7 +38,9 @@ func StartASRProcess(wsURL string, ctx context.Context, userID string, audioRead
 		"wav_name":       "rtsp_stream",
 		"is_speaking":    true,
 		"vad_kws": map[string]interface{}{
-			"speech_noise_thres": 0.8,
+			"speech_noise_thres":       0.8,
+			"sil_to_speech_time_thres": 300,
+			"speech_to_sil_time_thres": 150,
 		},
 	}
 	conn.WriteJSON(initMsg)
