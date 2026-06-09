@@ -26,6 +26,7 @@ type SimpleVAD struct {
 	EnergyThreshold float64 // 能量阈值 (推荐 200-500)
 	MinZCR          float64 // 最小过零率 (过滤低频隆隆声，推荐 0.02)
 	MaxZCR          float64 // 最大过零率 (过滤高频电流嘶嘶声，推荐 0.5)
+	TriggerCount    int     // 当前连续达标的帧数 (用于过滤连续的静音帧)
 }
 
 // NewSimpleVAD 初始化 VAD
@@ -76,12 +77,24 @@ func (v *SimpleVAD) IsSpeech(pcmData []int16) bool {
 	// 计算 ZCR (过零率)
 	zcr := float64(crossings) / float64(len(pcmData))
 
-	// 判断逻辑：能量必须大于阈值，且频率特征必须在人声范围内
-	if rms > v.EnergyThreshold && zcr > v.MinZCR && zcr < v.MaxZCR {
-		return true
-	}
+	log.Printf("[VAD Debug] rms: %f, zcr: %f, triggerCount: %d", rms, zcr, v.TriggerCount)
 
-	return false
+	// 判断当前单帧是否达标
+	isCurrentFrameValid := rms > v.EnergyThreshold && zcr > v.MinZCR && zcr < v.MaxZCR
+
+	if isCurrentFrameValid {
+		v.TriggerCount++ // 连续达标计数+1
+		// 必须连续 2 帧（200ms）都达标，才判定为真说话
+		if v.TriggerCount >= 2 {
+			return true
+		}
+		// 只有 1 帧达标，可能是瞬间杂音/回声，继续拦截！
+		return false
+	} else {
+		// 只要有 1 帧不达标，立刻把连续计数清零
+		v.TriggerCount = 0
+		return false
+	}
 }
 
 // StartASRProcess 处理音频流并连接到 FunASR
