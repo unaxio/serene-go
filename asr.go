@@ -34,8 +34,8 @@ func NewSimpleVAD() *SimpleVAD {
 		// 16bit 音频最大值是 32768。
 		// 正常人说话能量通常在 1000 以上。
 		// 外放残留的微弱回声通常在 100-300 左右。
-		EnergyThreshold: 300.0,
-		MinZCR:          0.01,
+		EnergyThreshold: 200.0,
+		MinZCR:          0.02,
 		MaxZCR:          0.50,
 	}
 }
