@@ -77,7 +77,7 @@ func (v *SimpleVAD) IsSpeech(pcmData []int16) bool {
 	// 计算 ZCR (过零率)
 	zcr := float64(crossings) / float64(len(pcmData))
 
-	log.Printf("[VAD Debug] rms: %f, zcr: %f, triggerCount: %d", rms, zcr, v.TriggerCount)
+	// log.Printf("[VAD Debug] rms: %f, zcr: %f, triggerCount: %d", rms, zcr, v.TriggerCount)
 
 	// 判断当前单帧是否达标
 	isCurrentFrameValid := rms > v.EnergyThreshold && zcr > v.MinZCR && zcr < v.MaxZCR
