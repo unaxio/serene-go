@@ -21,27 +21,34 @@ type FunASRResult struct {
 	Mode    string `json:"mode"`
 }
 
-// SimpleVAD 简易语音活动检测器
-type SimpleVAD struct {
-	EnergyThreshold float64 // 能量阈值 (推荐 200-500)
-	MinZCR          float64 // 最小过零率 (过滤低频隆隆声，推荐 0.02)
-	MaxZCR          float64 // 最大过零率 (过滤高频电流嘶嘶声，推荐 0.5)
-	TriggerCount    int     // 当前连续达标的帧数 (用于过滤连续的静音帧)
+// SmartVAD 带状态机与防切头去尾的智能 VAD
+type SmartVAD struct {
+	EnergyThreshold float64
+	MinZCR          float64
+	MaxZCR          float64
+
+	// 状态机核心参数
+	PreRollFrames  int // 预录制延迟帧数 (防切头)
+	HangoverFrames int // 滞留维持帧数 (防去尾)
+
+	// 内部状态
+	isSpeaking    bool
+	hangoverCount int
+	delayBuffer   [][]byte
 }
 
-// NewSimpleVAD 初始化 VAD
-func NewSimpleVAD() *SimpleVAD {
-	return &SimpleVAD{
-		// 16bit 音频最大值是 32768。
-		// 正常人说话能量通常在 1000 以上。
-		// 外放残留的微弱回声通常在 100-300 左右。
+// NewSmartVAD 初始化 VAD
+func NewSmartVAD() *SmartVAD {
+	return &SmartVAD{
 		EnergyThreshold: 400.0,
 		MinZCR:          0.01,
 		MaxZCR:          0.50,
+		// 你的 buf 是 3200 字节，在 16kHz 16bit 单声道下刚好是 100ms / 帧
+		PreRollFrames:  3, // 延迟 300ms 输出，完美保留起音
+		HangoverFrames: 6, // 停顿 600ms 以内都算连续说话
 	}
 }
 
-// bytesToInt16 将 FFmpeg 吐出的小端序 PCM 字节流转换为 16 位整数切片
 func bytesToInt16(buf []byte) []int16 {
 	res := make([]int16, len(buf)/2)
 	for i := 0; i < len(buf)/2; i++ {
@@ -50,21 +57,17 @@ func bytesToInt16(buf []byte) []int16 {
 	return res
 }
 
-// IsSpeech 判断当前音频帧是否包含人声
-func (v *SimpleVAD) IsSpeech(pcmData []int16) bool {
+// 内部方法：仅判断当前物理帧是否有声音
+func (v *SmartVAD) isFrameActive(pcmData []int16) bool {
 	if len(pcmData) == 0 {
 		return false
 	}
-
 	var sumEnergy float64
 	crossings := 0
 
 	for i := 0; i < len(pcmData); i++ {
-		// 1. 累计能量平方
 		sample := float64(pcmData[i])
 		sumEnergy += sample * sample
-
-		// 2. 计算过零率 (Zero-Crossing)
 		if i > 0 {
 			if (pcmData[i] >= 0 && pcmData[i-1] < 0) || (pcmData[i] < 0 && pcmData[i-1] >= 0) {
 				crossings++
@@ -72,28 +75,49 @@ func (v *SimpleVAD) IsSpeech(pcmData []int16) bool {
 		}
 	}
 
-	// 计算 RMS (均方根能量)
 	rms := math.Sqrt(sumEnergy / float64(len(pcmData)))
-	// 计算 ZCR (过零率)
 	zcr := float64(crossings) / float64(len(pcmData))
 
-	// log.Printf("[VAD Debug] rms: %f, zcr: %f, triggerCount: %d", rms, zcr, v.TriggerCount)
+	return rms > v.EnergyThreshold && zcr > v.MinZCR && zcr < v.MaxZCR
+}
 
-	// 判断当前单帧是否达标
-	isCurrentFrameValid := rms > v.EnergyThreshold && zcr > v.MinZCR && zcr < v.MaxZCR
+// Process 核心流水线：进一帧，出一帧 (带状态的洗滤)
+func (v *SmartVAD) Process(rawBuf []byte) []byte {
+	pcmData := bytesToInt16(rawBuf)
+	active := v.isFrameActive(pcmData)
 
-	if isCurrentFrameValid {
-		v.TriggerCount++ // 连续达标计数+1
-		// 必须连续 2 帧（200ms）都达标，才判定为真说话
-		if v.TriggerCount >= 2 {
-			return true
-		}
-		// 只有 1 帧达标，可能是瞬间杂音/回声，继续拦截！
-		return false
+	// 1. 更新状态机
+	if active {
+		v.isSpeaking = true
+		v.hangoverCount = v.HangoverFrames // 只要有声音，就重置滞留期
 	} else {
-		// 只要有 1 帧不达标，立刻把连续计数清零
-		v.TriggerCount = 0
-		return false
+		if v.isSpeaking {
+			v.hangoverCount--
+			if v.hangoverCount <= 0 {
+				v.isSpeaking = false // 彻底撑不住了，断开句子
+			}
+		}
+	}
+
+	// 2. 将当前帧数据深拷贝，推入延迟队列
+	bufCopy := make([]byte, len(rawBuf))
+	copy(bufCopy, rawBuf)
+	v.delayBuffer = append(v.delayBuffer, bufCopy)
+
+	// 3. 队列水池未满前，不往外吐真实数据（用同等长度静音代替，维持 WebSocket 心跳）
+	if len(v.delayBuffer) <= v.PreRollFrames {
+		return make([]byte, len(rawBuf))
+	}
+
+	// 4. 队列满了，取出队首最老的一帧
+	oldestBuf := v.delayBuffer[0]
+	v.delayBuffer = v.delayBuffer[1:]
+
+	// 5. 根据当前的综合状态，决定吐出真实音频还是静音
+	if v.isSpeaking {
+		return oldestBuf // 吐出带有 pre-roll 预录制的真实声音
+	} else {
+		return make([]byte, len(oldestBuf)) // 吐出完美抹平的静音垫
 	}
 }
 
@@ -158,7 +182,7 @@ func StartASRProcess(wsURL string, ctx context.Context, userID string, audioRead
 	buf := make([]byte, 3200) // 每次读取 100ms 的 16k 16bit 单声道音频
 
 	// 初始化我们的纯 Go VAD 引擎
-	vadEngine := NewSimpleVAD()
+	vadEngine := NewSmartVAD()
 
 	for {
 		select {
@@ -170,26 +194,17 @@ func StartASRProcess(wsURL string, ctx context.Context, userID string, audioRead
 				// 获取有效数据切片
 				validBuf := buf[:n]
 
-				// 将字节流转为 int16 进行计算
-				pcmData := bytesToInt16(validBuf)
+				// 让 VAD 引擎处理，它会返回该发真实音频还是静音填充
+				processedBuf := vadEngine.Process(validBuf)
 
-				// 核心：让 VAD 判断这 100ms 的声音是不是真人说话
-				if vadEngine.IsSpeech(pcmData) {
-					// 是真声音，发给 FunASR
-					err = conn.WriteMessage(websocket.BinaryMessage, validBuf)
-				} else {
-					// 是微弱的回声/环境噪音，发一段同等长度的纯静音给 FunASR，维持心跳和时间戳
-					silentBuf := make([]byte, n)
-					err = conn.WriteMessage(websocket.BinaryMessage, silentBuf)
-					// log.Println("[VAD] 拦截了一段回声残余或噪音") // 调试时可以打开
-				}
-
+				// 永远固定向 FunASR 写入处理后的 Buffer，保持时间戳严丝合缝
+				err = conn.WriteMessage(websocket.BinaryMessage, processedBuf)
 				if err != nil {
 					return
 				}
 			}
 			if err != nil {
-				return // 流结束或出错
+				return
 			}
 		}
 	}
