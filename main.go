@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -52,6 +53,7 @@ func NewStreamManager() *StreamManager {
 
 var uploadInterval time.Duration
 var funAsrURL string
+var EnableAudioDebugRecord = true
 
 func init() {
 	log.Println("init")
@@ -226,8 +228,31 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 
 		cmd.Stderr = os.Stdout
 
+		// ========= 新增：调试录音拦截机制 =========
+		var finalAudioReader io.Reader = audioR
+
+		if EnableAudioDebugRecord {
+			// 创建录音文件，文件名带上用户ID和时间戳，防止多路并发时互相覆盖
+			recordPath := fmt.Sprintf("./debug_audio_%s_%d.pcm", userID, time.Now().Unix())
+			recordFile, err := os.Create(recordPath)
+			if err != nil {
+				log.Printf("[Debug Record Error] 创建录音文件失败: %v", err)
+			} else {
+				// 核心生命周期对齐：
+				// runPipeline 会在整个 RTSP 流断开、FFmpeg 退出后才收尾。
+				// 所以这里的 defer 会在流彻底结束时安全地关闭录音文件句柄。
+				defer recordFile.Close()
+
+				// 使用 TeeReader：当 ASR 协程从 finalAudioReader 读取数据时，
+				// 底层会自动且同步地把这一份数据写入 recordFile。
+				finalAudioReader = io.TeeReader(audioR, recordFile)
+				log.Printf("[Debug Record] 🛑 已开启音频录制，送往 FunASR 的原始数据将同步保存至: %s", recordPath)
+			}
+		}
+		// ==========================================
+
 		// ========= 新增：启动 ASR 处理协程 =========
-		go StartASRProcess(funAsrURL, ctx, userID, audioR)
+		go StartASRProcess(funAsrURL, ctx, userID, finalAudioReader)
 		// ===========================================
 
 		// === 以下保持原样，处理视频流 ===
