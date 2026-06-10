@@ -233,7 +233,7 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 
 		if EnableAudioDebugRecord {
 			// 创建录音文件，文件名带上用户ID和时间戳，防止多路并发时互相覆盖
-			recordPath := fmt.Sprintf("./debug_audio_%s_%d.pcm", userID, time.Now().Unix())
+			recordPath := fmt.Sprintf("./debug/audio_%s_%d.pcm", userID, time.Now().Unix())
 			recordFile, err := os.Create(recordPath)
 			if err != nil {
 				log.Printf("[Debug Record Error] 创建录音文件失败: %v", err)
