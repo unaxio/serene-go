@@ -187,20 +187,23 @@ func (m *StreamManager) runPipeline(ctx context.Context, userID string) {
 		// ======================================
 
 		// --- 硬件加速逻辑分发 ---
+		// 压低音量 + 高通，减轻上游 AEC 残余回声对 ASR 的影响
+		const audioFilter = "volume=0.6,highpass=f=80"
+
 		if m.useHW {
 			if runtime.GOOS == "darwin" { // Mac
 				args = []string{"-hwaccel", "videotoolbox", "-rtsp_transport", "tcp", "-i", rtspURL,
 					"-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1",
-					"-f", "s16le", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "pipe:3"} // 新增音频输出到 pipe:3
+					"-af", audioFilter, "-f", "s16le", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "pipe:3"}
 			} else { // Linux (Nvidia)
 				args = []string{"-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-rtsp_transport", "tcp", "-i", rtspURL,
 					"-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1",
-					"-f", "s16le", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "pipe:3"} // 新增音频输出到 pipe:3
+					"-af", audioFilter, "-f", "s16le", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "pipe:3"}
 			}
 		} else { // 纯 CPU 模式
 			args = []string{"-rtsp_transport", "tcp", "-i", rtspURL,
 				"-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
-				"-f", "s16le", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "pipe:3"} // 新增音频输出到 pipe:3
+				"-af", audioFilter, "-f", "s16le", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "pipe:3"}
 		}
 
 		log.Printf("[Connecting] Stream: %s", rtspURL)
